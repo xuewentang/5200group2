@@ -14,7 +14,7 @@
     ```
 
 2. **Run Notebooks**:
-    Open and run the files in clean crime python/ (`crime_chicago.ipynb`, `crime_la.ipynb`) to perform the analysis.
+    Open and run the files in in the `clean crime python/` directory (`crime_chicago.ipynb`, `crime_la.ipynb`) to perform the analysis.
 
 ## Functions
 
