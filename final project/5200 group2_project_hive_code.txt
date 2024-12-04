@@ -1,0 +1,1740 @@
+----------------------------------------------------------------------------------------------------------------------------
+Step 1: Download and prepare Los Angeles and Chicago map data for visualization in ARCGIS 
+----------------------------------------------------------------------------------------------------------------------------
+Download Los Angeles crime data set from 2020 to present from: 
+
+https://catalog.data.gov/dataset/crime-data-from-2020-to-present 
+
+Download Chicago crime data set from 2001 to present from: 
+
+https://catalog.data.gov/dataset/crimes-2001-to-present 
+
+ 
+
+Prepare Los Angeles and Chicago Crime data for spatial aggregation (sometimes called spatial binning). Spatial aggregation is 
+extremely useful in summarizing big data to gain a meaningful snapshot of patterns in your data. 
+Spatial aggregation works by creating square bins of a user specified size, like this: 
+
+
+For the aggregation we need to download shapefiles that contain square bins for Los Angeles and Chicago.  
+
+Chicago: https://data.cityofchicago.org/api/geospatial/5jrd-6zik?method=export&format=Shapefile
+
+Los Angeles: https://geohub.lacity.org/datasets/la-city-2020-census-tracts-/explore?location=34.018934%2C-118.412043%2C10.11 
+
+Next we are going to use Python to convert latitude and longitude from the original crime data files to square bins and create .csv files with four columns: 
+
+geoid 
+primary type 
+Count 
+Year 
+Chicago: 
+
+Open PyCharm IDE, then open folder where we saved all data and create the corresponding directories(screenshot)
+- Create a new Python file crime_chicago.py , paste the code below and execute it: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   Python   -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+import pandas as pd 
+import geopandas as gpd 
+import zipfile 
+ 
+census_tract_shp = 'chicago_shapefile/geo_export_5c337cc7-e5d1-4343-a2ec-2aae0af46f7e.shp' 
+crime_csv = 'original_data/crime_chicago_2001_2024.csv' 
+# Generate list of years from 2020 to 2024 
+years = list(range(2020, 2025)) 
+# Read in the census tract shapefile 
+tracts_gdf = gpd.read_file(census_tract_shp) 
+tracts_gdf = tracts_gdf.to_crs(epsg=4326) 
+tracts_gdf = tracts_gdf[['geometry', 'geoid10']] 
+ 
+# Read in the crime points data, this is very large dataset 
+crime_df = pd.read_csv(crime_csv) 
+ 
+# Show first 5 rows of tracts_gdf, you notice the geoid10 is 11 digits 
+tracts_gdf.head() 
+ 
+# Define function to aggregate crime points counts by census tract, by type of crime 
+def aggregate_points(points_gdf, geometry_gdf): 
+    # Spatial join the crime points with the census tracts 
+    points_gdf = gpd.sjoin(points_gdf, geometry_gdf, how='inner', predicate='within') 
+    # Group by census tract and type of crime 
+    points_gdf = points_gdf.groupby(['geoid10', 'Primary Type']).size().reset_index(name='count') 
+    return points_gdf 
+ 
+# Create an empty dataframe to store the combined results 
+combined_results = pd.DataFrame() 
+ 
+for year in years: 
+    # Filter the crime data for the current year 
+    crime_df_year = crime_df[crime_df['Year'] == year] 
+ 
+    # Convert the filtered crime data to a GeoDataFrame 
+    crime_gdf_year = gpd.GeoDataFrame(crime_df_year, 
+                                      geometry=gpd.points_from_xy(crime_df_year.Longitude, crime_df_year.Latitude)) 
+    crime_gdf_year = crime_gdf_year.set_crs(epsg=4326) 
+ 
+    # Aggregate the crime points by census tract 
+    aggregated_points = aggregate_points(crime_gdf_year, tracts_gdf) 
+ 
+    # Add the year to the aggregated points dataframe 
+    aggregated_points['Year'] = year 
+ 
+    # Append the results to the combined dataframe 
+    combined_results = pd.concat([combined_results, aggregated_points], ignore_index=True) 
+ 
+# Save the combined results to a CSV file 
+combined_results.to_csv('crime_data/crime_chicago_2001_2024_by_tract_type.csv', index=False) 
+# Randomly sample 10,000 rows from the combined results, and display the first 5 rows. 
+combined_results.sample(10000).head() 
+ 
+# Filter combined_results where year is from 2020 to 2024 
+combined_results_2020_2024 = combined_results[combined_results['Year'] >= 2020] 
+# Summarize data by year and geoid10 
+combined_results_2020_2024 = combined_results_2020_2024.groupby(['geoid10', 'Year']).sum().reset_index() 
+# Drop primary type column 
+combined_results_2020_2024 = combined_results_2020_2024.drop(columns='Primary Type') 
+# Copy 'geometry' column from tracts_gdf to combined_results_2020_2024 
+combined_results_2020_2024 = combined_results_2020_2024.merge(tracts_gdf, on='geoid10', how='left') 
+# Convert combined_results_2020_2024 to GeoDataFrame 
+combined_results_2020_2024 = gpd.GeoDataFrame(combined_results_2020_2024, geometry='geometry') 
+# Change count, Year columns to integer 
+combined_results_2020_2024['count'] = combined_results_2020_2024['count'].astype(int) 
+# Save the combined results to a shapefile 
+combined_results_2020_2024.to_file('map_chicago/crime_chicago_aggregated.shp') 
+ 
+# Zip the shapefile 
+with zipfile.ZipFile('map_chicago/crime_chicago_aggregated.zip', 'w') as z: 
+    z.write('map_chicago/crime_chicago_aggregated.shp') 
+    z.write('map_chicago/crime_chicago_aggregated.shx') 
+    z.write('map_chicago/crime_chicago_aggregated.dbf') 
+    z.write('map_chicago/crime_chicago_aggregated.prj') 
+    z.write('map_chicago/crime_chicago_aggregated.cpg') 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+Los Angeles: 
+Create new folder map_la and then create a new Python file crime_la.py. 
+Paste the code below and execute it:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   Python   -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+import pandas as pd 
+import geopandas as gpd 
+import zipfile 
+ 
+census_tract_shp = 'la_shapefile/LA_City_2020_Census_Tracts_.shp' 
+crime_csv = 'original_data/crime_la_2020_2024.csv' 
+ 
+# Generate list of years from 2001 to 2024 
+years = list(range(2020, 2024)) 
+# Read in the census tract shapefile 
+tracts_gdf = gpd.read_file(census_tract_shp) 
+tracts_gdf = tracts_gdf.to_crs(epsg=4326) 
+tracts_gdf = tracts_gdf[['geometry', 'CT20']] 
+ 
+# Read in the crime points data, this is very large dataset 
+crime_df = pd.read_csv(crime_csv) 
+ 
+# Convert the date to a datetime object 
+crime_df['Date Rptd'] = pd.to_datetime(crime_df['Date Rptd'], format='%m/%d/%Y %I:%M:%S %p') 
+crime_df['Year'] = crime_df['Date Rptd'].dt.year 
+ 
+# Define function to aggregate crime points counts by census tract, by type of crime 
+def aggregate_points(points_gdf, geometry_gdf): 
+    # Spatial join the points to the census tracts 
+    points_gdf = gpd.sjoin(points_gdf, geometry_gdf, how='inner', predicate='within') 
+    # Group by the census tract and 
+    points_gdf = points_gdf.groupby(['CT20', 'Crm Cd']).size().reset_index(name='count') 
+    return points_gdf 
+ 
+ 
+# Create an empty dataframe to store the combined results 
+combined_results = pd.DataFrame() 
+ 
+# Loop through each year 
+for year in years: 
+    # Filter the crime data for the current year 
+    crime_df_year = crime_df[crime_df['Year'] == year] 
+ 
+    # Convert the filtered crime data to a GeoDataFrame 
+    crime_gdf_year = gpd.GeoDataFrame(crime_df_year, geometry=gpd.points_from_xy(crime_df_year.LON, crime_df_year.LAT)) 
+    crime_gdf_year = crime_gdf_year.set_crs(epsg=4326) 
+ 
+    # Aggregate the crime points by census tract 
+    aggregated_points = aggregate_points(crime_gdf_year, tracts_gdf) 
+ 
+    # Add the year to the aggregated points dataframe 
+    aggregated_points['Year'] = year 
+ 
+    # Append the results to the combined dataframe 
+    combined_results = pd.concat([combined_results, aggregated_points], ignore_index=True) 
+ 
+# Create a 'geoid10' columns. goeid10 = '06037' + CT20 
+combined_results['geoid10'] = '06037' + combined_results['CT20'].astype(str) 
+combined_results = combined_results[['geoid10', 'Crm Cd', 'count', 'Year']] 
+ 
+# Save the combined results to a CSV file 
+combined_results.to_csv('crime_data/crime_la_2020_2024_by_tract_type.csv', index=False) 
+ 
+# Randomly sample 10,000 rows from the combined results, and display the first 5 rows. 
+combined_results.sample(10000).head() 
+ 
+# Filter combined_results where year is from 2020 to 2024 
+combined_results_2020_2024 = combined_results[combined_results['Year'] >= 2020] 
+# Summarize data by year and geoid10 
+combined_results_2020_2024 = combined_results_2020_2024.groupby(['geoid10', 'Year']).sum().reset_index() 
+# Drop primary type column 
+combined_results_2020_2024 = combined_results_2020_2024.drop(columns='Crm Cd') 
+# Copy 'geometry' column from tracts_gdf to combined_results_2020_2024 
+tracts_gdf['geoid10'] = '06037' + tracts_gdf['CT20'].astype(str) 
+combined_results_2020_2024 = combined_results_2020_2024.merge(tracts_gdf, on='geoid10', how='left') 
+# Convert combined_results_2020_2024 to GeoDataFrame 
+combined_results_2020_2024 = gpd.GeoDataFrame(combined_results_2020_2024, geometry='geometry') 
+# Change count, Year columns to integer 
+combined_results_2020_2024['count'] = combined_results_2020_2024['count'].astype(int) 
+# Save the combined results to a shapefile 
+combined_results_2020_2024.to_file('map_la/crime_la_aggregated.shp') 
+ 
+# Zip the shapefile 
+with zipfile.ZipFile('map_la/crime_la_aggregated.zip', 'w') as z: 
+    z.write('map_la/crime_la_aggregated.shp') 
+    z.write('map_la/crime_la_aggregated.shx') 
+    z.write('map_la/crime_la_aggregated.dbf') 
+    z.write('map_la/crime_la_aggregated.prj') 
+    z.write('map_la/crime_la_aggregated.cpg') 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+----------------------------------------------------------------------------------------------------------------------------
+Step 2: Crime Data Loaded into Hadoop Clusters 
+----------------------------------------------------------------------------------------------------------------------------
+Then follow the steps: 
+create a new folder on your PC 
+put all files in a one Crime.zip 
+crime_chicago_2001_2024_by_tract_type.csv (result file from the step 1) 
+crime_la_2020_2024_by_tract_type.csv (result file from the step 1) 
+crime_la_2020_2024.csv (original data set LA) 
+crime_chicago_2001_2024.csv (original data set Chicago) 
+open terminal and using your path and username enter command below and then enter your password:   
+
+scp "/Users/mityakim/Desktop/Crime.zip" dkim171@129.146.230.230:/home/dkim171 
+
+enter to the Linux server: 
+
+ssh <user_name>@129.146.230.230 
+
+enter command: 
+
+unzip Crime.zip 
+
+You may check out all directories exist, and its files are created: 
+
+-bash-4.2$ ls 
+
+Create crime folders and sub folders 
+-bash-4.2$ hdfs dfs -mkdir Project/crime 
+-bash-4.2$ hdfs dfs -mkdir Project/crime/chicago 
+-bash-4.2$ hdfs dfs -mkdir Project/crime/la 
+-bash-4.2$ hdfs dfs -mkdir Project/crime/chicago_tractid 
+-bash-4.2$ hdfs dfs -mkdir Project/crime/la_tractid 
+
+ 
+Put files in Hadoop: 
+-bash-4.2$ hdfs dfs -put crime_chicago_2001_2024.csv Project/crime/chicago 
+-bash-4.2$ hdfs dfs -put crime_la_2020_2024.csv Project/crime/la 
+-bash-4.2$ hdfs dfs -put crime_chicago_2001_2024_by_tract_type.csv Project/crime/chicago_tractid 
+-bash-4.2$ hdfs dfs -put crime_la_2020_2024_by_tract_type.csv Project/crime/la_tractid 
+ 
+
+to check files, enter: 
+-bash-4.2$ hdfs dfs -ls Project/crime/chicago_tractid 
+-bash-4.2$ hdfs dfs -ls Project/crime/la_tractid 
+-bash-4.2$ hdfs dfs -ls Project/crime/chicago 
+-bash-4.2$ hdfs dfs -ls Project/crime/la 
+
+----------------------------------------------------------------------------------------------------------------------------
+Step 3: Creating Hive tables to Query Crime Data 
+----------------------------------------------------------------------------------------------------------------------------
+Open Hive CLI (Command Line Shell Interface): 
+
+-bash-4.2$ beeline 
+
+ 
+
+Make sure that you are using your database: 
+
+use <username> 
+
+0: jdbc:hive2://bigdaiun0.sub03291929060.trai> use <username> 
+
+ 
+Los Angeles Crime Tractid Table:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_la_crime; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_la_crime( 
+   DR_NO STRING, 
+   Date_Rpt STRING, 
+   DATE_OCC STRING, 
+   TIME_OCC STRING, 
+   AREA STRING, 
+   AREA_NAME STRING, 
+   RptDist_No STRING, 
+   Part_1_2 STRING, 
+   Crm_Cd STRING, 
+   Crm_Cd_Desc STRING, 
+   Mocodes STRING, 
+   Vict_Age STRING, 
+   Vict_Sex STRING, 
+   Vict_Descent STRING, 
+   Premis_Cd STRING, 
+   Premis_Desc STRING, 
+   Weapon_Used_Cd STRING, 
+   Weapon_Desc STRING, 
+   Status STRING, 
+   Status_Desc STRING, 
+   Crm_Cd_1 STRING, 
+   Crm_Cd_2 STRING, 
+   Crm_Cd_3 STRING, 
+   Crm_Cd_4 STRING, 
+   LOCATION STRING, 
+   Cross_Street STRING, 
+   LAT STRING, 
+   LON STRING 
+) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/crime/la ' 
+TBLPROPERTIES ('skip.header.line.count'='1'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   END      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+Chicago Crime Table:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_chicago_crime; 
+CREATE EXTERNAL TABLE IF NOT EXISTS original_chicago_crime( 
+    ID STRING, 
+    Case_Number STRING, 
+    `Date` STRING, 
+    Block STRING, 
+    IUCR STRING, 
+    Primary_Type STRING, 
+    Description STRING, 
+    Location_Description STRING, 
+    Arrest STRING, 
+    Domestic STRING, 
+    Beat STRING, 
+    District STRING, 
+    Ward STRING, 
+    Community_Area STRING, 
+    FBI_Code STRING, 
+    X_Coordinate STRING, 
+    Y_Coordinate STRING, 
+    Year STRING, 
+    Updated_On STRING, 
+    Latitude STRING, 
+    Longitude STRING, 
+    Location STRING 
+) 
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/crime/chicago' 
+TBLPROPERTIES ('skip.header.line.count'='1'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   END      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Los Angeles Crime Tractid Table:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_tractid; 
+CREATE EXTERNAL TABLE IF NOT EXISTS la_tractid( 
+   tract_id STRING, 
+   primary_type STRING, 
+   count STRING, 
+   year STRING 
+) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/crime/la_tractid' 
+TBLPROPERTIES ('skip.header.line.count'='1'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   END      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Chicago Crime Tractid Table:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS chicago_tractid; 
+CREATE EXTERNAL TABLE IF NOT EXISTS chicago_tractid( 
+   tract_id STRING, 
+   primary_type STRING, 
+   count STRING, 
+   year STRING 
+) 
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/crime/chicago_tractid' 
+TBLPROPERTIES ('skip.header.line.count'='1'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   END      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+----------------------------------------------------------------------------------------------------------------------------
+Step 4: Download and clean topic data 
+----------------------------------------------------------------------------------------------------------------------------
+Education Data 
+Go to the website: 
+https://data.census.gov/all 
+
+For the analysis purposes we will use:  
+ 	Geographies → Census Tract → California → Los Angeles County → All Census Tracts 
+    Topics → Education → Educational Attainment 
+    Years → 2022
+    Then we need to open Tables and click Download and repeat for 2020, 2021 years. 
+
+
+After we need to clean our data and get columns that we will use for the future analysis, 
+and we are going to use Python and PyCharm or Visual Studio Code.  
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   Python   -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+import pandas as pd 
+ 
+# Define the mapping of original columns to new column names 
+column_map = { 
+    "GEO_ID": "geo_id", 
+    "NAME": "area_name", 
+ 
+    "S1501_C01_001E": "population_age_18_24", 
+    "S1501_C01_003E": "high_school_grad_or_higher_18_24", 
+ 
+    "S1501_C01_016E": "population_25_34_years", 
+    "S1501_C01_017E": "high_school_grad_or_higher_25_34", 
+ 
+    "S1501_C01_019E": "population_35_44_years", 
+    "S1501_C01_020E": "high_school_grad_or_higher_35_44", 
+ 
+    "S1501_C01_022E": "population_45_64_years", 
+    "S1501_C01_023E": "high_school_grad_or_higher_45_64", 
+ 
+    "S1501_C01_025E": "population_age_65_and_over", 
+    "S1501_C01_026E": "high_school_grad_or_higher_65_and_over" 
+} 
+# Load the data from the provided file 
+file_path = '/Users/mityakim/Desktop/education/2020_education.csv'  # replace with the actual file path 
+data = pd.read_csv(file_path) 
+ 
+# Select only the required columns and rename them 
+selected_data = data[list(column_map.keys())].copy() 
+selected_data.rename(columns=column_map, inplace=True) 
+
+# Add the new 'year' column with a constant value of 2020 
+selected_data['year'] = 2020 
+ 
+# Save the cleaned and selected data to a new CSV file 
+output_file_path = '/Users/mityakim/Desktop/education/2020_education_clean.csv'  # replace with desired output path 
+selected_data.to_csv(output_file_path, index=False) 
+ 
+print("CSV file created successfully at:", output_file_path) 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Repeat operation for all 3 files (2020, 2021, 2022). 
+
+Then change filter to Chicago
+Download 2020, 2021, 2022 years and repeat steps for 2 and 3. 
+
+
+Employment Data  
+Topics → Employment → Employment and Labor Force Status 
+The same filters for the Year and Geographic. Download data for LA and Chicago for 2020, 2021 and 2022.  
+
+Next clean data and get columns using Python: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   Python   -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+import pandas as pd 
+ 
+# Define the mapping of original columns to new column names 
+column_map = { 
+    "GEO_ID": "geo_id", 
+    "NAME": "area_name", 
+ 
+    "DP03_0001E": "population_age_16_and_over", 
+    "DP03_0002E": "population_age_16_and_over_in_labor_force", 
+    "DP03_0004E": "population_age_16_and_over_in_civ_labor_force_employed", 
+    "DP03_0005E": "population_age_16_and_over_in_civ_labor_force_unemployed", 
+    "DP03_0007E": "population_age_16_and_over_not_in_labor_force", 
+    "DP03_0014E": "own_children_of_the_householder_under_6_years", 
+    "DP03_0016E": "own_children_of_the_householder_under_6_to_17_years", 
+} 
+# Load the data from the provided file 
+file_path = '/Users/mityakim/Desktop/employment/2020_employment.csv'  # replace with the actual file path 
+data = pd.read_csv(file_path) 
+ 
+# Select only the required columns and rename them 
+selected_data = data[list(column_map.keys())].copy() 
+selected_data.rename(columns=column_map, inplace=True) 
+ 
+# Add the new 'year' column with a constant value of 2020 
+selected_data['year'] = 2020 
+ 
+# Save the cleaned and selected data to a new CSV file 
+output_file_path = '/Users/mityakim/Desktop/employment/2020_employment_clean.csv'  # replace with desired output path 
+selected_data.to_csv(output_file_path, index=False) 
+ 
+print("CSV file created successfully at:", output_file_path) 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Income Data 
+
+Topics → Income and Poverty → Income and Poverty 
+The same filters for the Year and Geographic. Download data for LA and Chicago for 2020, 2021 and 2022. 
+
+Next clean data and get columns using Python: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   Python   -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+import pandas as pd 
+# Define the mapping of original columns to new column names 
+column_map = { 
+    "GEO_ID": "geo_id", 
+    "NAME": "area_name", 
+    "S1901_C01_002E": "less_than_10k", 
+    "S1901_C01_003E": "from_10k_to_14999", 
+    "S1901_C01_004E": "from_15k_to_24999", 
+    "S1901_C01_005E": "from_25k_to_34999", 
+    "S1901_C01_006E": "from_35k_to_49999", 
+    "S1901_C01_007E": "from_50k_to_74999", 
+    "S1901_C01_008E": "from_75k_to_99999", 
+    "S1901_C01_009E": "from_100k_to_149999", 
+    "S1901_C01_010E": "from_150k_to_199999", 
+    "S1901_C01_011E": "from_200k_or_more", 
+    "S1901_C01_012E": "median_income", 
+}
+
+# Load the data from the provided file 
+file_path = '/Users/mityakim/Desktop/income/chicago/2022_income_chicago.csv'  # replace with the actual file path 
+data = pd.read_csv(file_path) 
+
+# Select only the required columns and rename them 
+selected_data = data[list(column_map.keys())].copy() 
+selected_data.rename(columns=column_map, inplace=True) 
+
+# Add the new 'year' column with a constant value of 2021 
+selected_data['year'] = 2022 
+# Save the cleaned and selected data to a new CSV file 
+output_file_path = '/Users/mityakim/Desktop/income/chicago/clean_chicago_income/2022_income_clean_chicago.csv'  # replace with desired output path 
+selected_data.to_csv(output_file_path, index=False) 
+print("CSV file created successfully at:", output_file_path) 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Population Data 
+Topics → Population and People 
+DP05 ACS Demographic and Housing Estimates 
+The same filters for the Year and Geographic. Download data for LA and Chicago for 2020, 2021 and 2022. 
+
+Next clean data and get columns using Python: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   Python   -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+import pandas as pd 
+ 
+# Define the mapping of original columns to new column names 
+column_map = { 
+    "GEO_ID": "geo_id", 
+    "NAME": "area_name", 
+ 
+    "DP05_0036E": "one_race", 
+    "DP05_0038E": "black_or_African_american", 
+    "DP05_0039E": "american_indian_and_alaska_native", 
+    "DP05_0040E": "cherokee_tribal_grouping", 
+    "DP05_0041E": "chippewa_tribal_grouping", 
+    "DP05_0042E": "navajo_tribal_grouping", 
+    "DP05_0043E": "sioux_tribal_grouping", 
+    "DP05_0044E": "asian", 
+    "DP05_0045E": "indian", 
+    "DP05_0046E": "chinese", 
+    "DP05_0047E": "filipino", 
+    "DP05_0048E": "japanese", 
+    "DP05_0049E": "korean", 
+    "DP05_0050E": "vietnamese", 
+    "DP05_0051E": "other_asian", 
+    "DP05_0052E": "native_hawaiian_and_other_pacific_islander", 
+    "DP05_0053E": "chamorro", 
+    "DP05_0054E": "native_hawaiian", 
+    "DP05_0055E": "samoan", 
+    "DP05_0056E": "other_native_hawaiian_and_other_pacific_pslander", 
+    "DP05_0065E":          
+
+    "race_alone_or_in_combination_with_one_or_more_other_races_total_population", 
+    "DP05_0072E": "hispanic_or_latino_total_population", 
+    "DP05_0073E": "hispanic_or_latino_total_population_of_any_race", 
+    "DP05_0074E": "mexican", 
+    "DP05_0075E": "puerto_rican", 
+    "DP05_0076E": "cuban", 
+    "DP05_0076M": "other_hispanic_or_latino" 
+} 
+ 
+# Load the data from the provided file 
+file_path = '/Users/mityakim/Desktop/population/la/2020_population_la.csv' 
+data = pd.read_csv(file_path) 
+ 
+# Select only the required columns and rename them 
+selected_data = data[list(column_map.keys())].copy() 
+selected_data.rename(columns=column_map, inplace=True) 
+ 
+# Add the new 'year' column with a constant value of 2020 
+selected_data['year'] = 2020 
+ 
+# Save the cleaned and selected data to a new CSV file 
+output_file_path = '/Users/mityakim/Desktop/population/la/clean_la_population/2020_population_clean_la.csv' 
+selected_data.to_csv(output_file_path, index=False) 
+ 
+print("CSV file created successfully at:", output_file_path) 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+----------------------------------------------------------------------------------------------------------------------------
+Step 5: Education, Employment, Income, Population Data Loaded into Hadoop Clusters 
+----------------------------------------------------------------------------------------------------------------------------
+ 
+- Put all clean files in data.zip and then open the terminal. Do not forget to use your path and username: 
+
+scp "/Users/mityakim/Desktop/data.zip" dkim171@129.146.230.230:/home/dkim171 
+
+Check files on Linux server: 
+
+ssh dkim171@129.146.230.230 
+
+- Enter command: 
+
+-bash-4.2$ ls 
+Then unzip data: 
+
+-bash-4.2$ unzip data 
+
+ 
+
+Create project folder and sub folders:
+-bash-4.2$ hdfs dfs -mkdir Project 
+
+-bash-4.2$ hdfs dfs -mkdir Project/education 
+-bash-4.2$ hdfs dfs -mkdir Project/education/la 
+-bash-4.2$ hdfs dfs -mkdir Project/education/chicago 
+
+-bash-4.2$ hdfs dfs -mkdir Project/employment 
+-bash-4.2$ hdfs dfs -mkdir Project/employment/la 
+-bash-4.2$ hdfs dfs -mkdir Project/employment/chicago 
+
+-bash-4.2$ hdfs dfs -mkdir Project/income 
+-bash-4.2$ hdfs dfs -mkdir Project/income/la 
+-bash-4.2$ hdfs dfs -mkdir Project/income/chicago 
+
+-bash-4.2$ hdfs dfs -mkdir Project/population 
+-bash-4.2$ hdfs dfs -mkdir Project/population/la 
+-bash-4.2$ hdfs dfs -mkdir Project/population/chicago 
+
+ 
+ Move all files to the HDFS directories respectively: 
+
+Chicago education 
+-bash-4.2$ hdfs dfs -put 2020_education_clean_chicago.csv Project/education/chicago 
+-bash-4.2$ hdfs dfs -put 2021_education_clean_chicago.csv Project/education/chicago 
+-bash-4.2$ hdfs dfs -put 2022_education_clean_chicago.csv Project/education/chicago 
+
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/education/chicago 
+
+LA education 
+-bash-4.2$ hdfs dfs -put 2020_education_clean.csv Project/education/la 
+-bash-4.2$ hdfs dfs -put 2021_education_clean.csv Project/education/la 
+-bash-4.2$ hdfs dfs -put 2022_education_clean.csv Project/education/la 
+
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/education/la 
+
+Chicago Employment 
+-bash-4.2$ hdfs dfs -put 2020_employment_clean_chicago.csv Project/employment/chicago 
+-bash-4.2$ hdfs dfs -put 2021_employment_clean_chicago.csv Project/employment/chicago 
+-bash-4.2$ hdfs dfs -put 2022_employment_clean_chicago.csv Project/employment/chicago 
+
+ 
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/employment/chicago 
+
+LA employment 
+-bash-4.2$ hdfs dfs -put 2020_employment_clean.csv Project/employment/la 
+-bash-4.2$ hdfs dfs -put 2021_employment_clean.csv Project/employment/la 
+-bash-4.2$ hdfs dfs -put 2022_employment_clean.csv Project/employment/la 
+
+ 
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/employment/la 
+
+Chicago income 
+-bash-4.2$ hdfs dfs -put 2020_income_clean_chicago.csv Project/income/chicago 
+-bash-4.2$ hdfs dfs -put 2021_income_clean_chicago.csv Project/income/chicago 
+-bash-4.2$ hdfs dfs -put 2022_income_clean_chicago.csv Project/income/chicago 
+
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/income/chicago 
+
+LA income 
+-bash-4.2$ hdfs dfs -put 2020_income_clean_la.csv Project/income/la 
+-bash-4.2$ hdfs dfs -put 2021_income_clean_la.csv Project/income/la 
+-bash-4.2$ hdfs dfs -put 2022_income_clean_la.csv Project/income/la 
+
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/income/la 
+
+Chicago population 
+-bash-4.2$ hdfs dfs -put 2020_population_clean_chicago.csv Project/population/chicago 
+-bash-4.2$ hdfs dfs -put 2021_population_clean_chicago.csv Project/population/chicago 
+-bash-4.2$ hdfs dfs -put 2022_population_clean_chicago.csv Project/population/chicago 
+
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/population/chicago 
+
+LA population 
+-bash-4.2$ hdfs dfs -put 2020_population_clean_la.csv Project/population/la 
+-bash-4.2$ hdfs dfs -put 2021_population_clean_la.csv Project/population/la 
+-bash-4.2$ hdfs dfs -put 2022_population_clean_la.csv Project/population/la 
+
+to check files, enter:  
+-bash-4.2$ hdfs dfs -ls Project/population/la 
+
+----------------------------------------------------------------------------------------------------------------------------
+Step 6: Creating Hive tables to Query Education, Employment, Income and Population Data 
+----------------------------------------------------------------------------------------------------------------------------
+- Enter Hadoop:  
+-bash-4.2$ beeline 
+
+ 	- Use database:  
+0: jdbc:hive2://bigdaiun0.sub03291929060.trai> use 5200group2 
+
+ 
+Create LA education table for 2020, 2021, 2022 years:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_la_education; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_la_education( 
+
+    geo_id STRING,  
+    area_name STRING,  
+    population_age_18_24 STRING, 
+    high_school_grad_or_higher_18_24 STRING, 
+    population_25_34_years STRING, 
+    high_school_grad_or_higher_25_34 STRING, 
+    population_35_44_years STRING, 
+    high_school_grad_or_higher_35_44 STRING, 
+    population_45_64_years STRING, 
+    high_school_grad_or_higher_45_64 STRING, 
+    population_age_65_and_over STRING, 
+    high_school_grad_or_higher_65_and_over STRING, 
+    `year` STRING 
+    ) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/education/la/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Create Chicago education table for 2020, 2021, 2022 years:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_chicago_education; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_chicago_education( 
+    geo_id STRING,  
+    area_name STRING,  
+    population_age_18_24 STRING, 
+    high_school_grad_or_higher_18_24 STRING, 
+    population_25_34_years STRING, 
+    high_school_grad_or_higher_25_34 STRING, 
+    population_35_44_years STRING, 
+    high_school_grad_or_higher_35_44 STRING, 
+    population_45_64_years STRING, 
+    high_school_grad_or_higher_45_64 STRING, 
+    population_age_65_and_over STRING, 
+    high_school_grad_or_higher_65_and_over STRING, 
+    `year` STRING 
+    ) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/education/chicago/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Create LA employment table for 2020, 2021, 2022 years:
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_la_employment; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_la_employment( 
+    geo_id STRING,  
+    area_name STRING,  
+    population_age_16_and_over STRING, 
+    population_age_16_and_over_in_labor_force STRING, 
+    population_age_16_and_over_in_civ_labor_force_employed STRING, 
+    population_age_16_and_over_in_civ_labor_force_unemployed STRING, 
+    population_age_16_and_over_not_in_labor_force STRING, 
+    own_children_of_the_householder_under_6_years STRING, 
+    own_children_of_the_householder_under_6_to_17_years STRING, 
+    `year` STRING 
+    ) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/employment/la/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Create Chicago employment table for 2020, 2021, 2022 years:
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_chicago_employment; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_chicago_employment( 
+    geo_id STRING,  
+    area_name STRING,  
+    population_age_16_and_over STRING, 
+    population_age_16_and_over_in_labor_force STRING, 
+    population_age_16_and_over_in_civ_labor_force_employed STRING, 
+    population_age_16_and_over_in_civ_labor_force_unemployed STRING, 
+    population_age_16_and_over_not_in_labor_force STRING, 
+    own_children_of_the_householder_under_6_years STRING, 
+    own_children_of_the_householder_under_6_to_17_years STRING, 
+    `year` STRING 
+    ) 
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/employment/chicago/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Create LA income table for 2020, 2021, 2022 years:
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_la_income; 
+CREATE EXTERNAL TABLE IF NOT EXISTS original_la_income( 
+    geo_id STRING,  
+    area_name STRING,  
+    less_than_10k STRING, 
+    from_10k_to_14999 STRING, 
+    from_15k_to_24999 STRING, 
+    from_25k_to_34999 STRING, 
+    from_35k_to_49999 STRING, 
+    from_50k_to_74999 STRING, 
+    from_75k_to_99999 STRING, 
+    from_100k_to_149999 STRING, 
+    from_150k_to_199999 STRING, 
+    from_200k_or_more STRING, 
+    median_income STRING,
+    `year` STRING 
+    ) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/income/la/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Create Chicago income table for 2020, 2021, 2022 years:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_chicago_income; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_chicago_income( 
+    geo_id STRING,  
+    area_name STRING,  
+    less_than_10k STRING, 
+    from_10k_to_14999 STRING, 
+    from_15k_to_24999 STRING, 
+    from_25k_to_34999 STRING, 
+    from_35k_to_49999 STRING, 
+    from_50k_to_74999 STRING, 
+    from_75k_to_99999 STRING, 
+    from_100k_to_149999 STRING, 
+    from_150k_to_199999 STRING, 
+    from_200k_or_more STRING, 
+    median_income STRING, 
+    `year` STRING 
+    ) 
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/income/chicago/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Create LA Population table for 2020, 2022 years:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_la_population; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_la_population( 
+    geo_id STRING,  
+    area_name STRING,  
+    one_race STRING, 
+    black_or_African_american STRING, 
+    merican_indian_and_alaska_native STRING, 
+    herokee_tribal_grouping STRING, 
+    chippewa_tribal_grouping STRING, 
+    navajo_tribal_grouping STRING, 
+    sioux_tribal_grouping STRING, 
+    asian STRING, 
+    indian STRING, 
+    chinese STRING, 
+    ilipino STRING, 
+    japanese STRING, 
+    korean STRING, 
+    vietnamese STRING, 
+    ther_asian STRING, 
+    native_hawaiian_and_other_pacific_islander STRING, 
+    chamorro STRING, 
+    native_hawaiian STRING, 
+    samoan STRING, 
+    ther_native_hawaiian_and_other_pacific_pslander STRING, 
+
+    race_alone_or_in_combination_with_one_or_more_other_races_total_population STRING, 
+    hispanic_or_latino_total_population STRING, 
+    ispanic_or_latino_total_population_of_any_race STRING, 
+    mexican STRING, 
+    puerto_rican STRING, 
+    cuban STRING, 
+    other_hispanic_or_latin STRING, 
+    `year` STRING 
+    ) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/population/la/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+
+Create Chicago Population table for 2020, 2022 years:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS original_chicago_population; 
+
+CREATE EXTERNAL TABLE IF NOT EXISTS original_chicago_population( 
+    geo_id STRING,  
+    area_name STRING,  
+    one_race STRING, 
+    black_or_African_american STRING, 
+    merican_indian_and_alaska_native STRING, 
+    herokee_tribal_grouping STRING, 
+    chippewa_tribal_grouping STRING, 
+    navajo_tribal_grouping STRING, 
+    sioux_tribal_grouping STRING, 
+    asian STRING, 
+    indian STRING, 
+    chinese STRING, 
+    ilipino STRING, 
+    japanese STRING, 
+    korean STRING, 
+    vietnamese STRING, 
+    ther_asian STRING, 
+    native_hawaiian_and_other_pacific_islander STRING, 
+    chamorro STRING, 
+    native_hawaiian STRING, 
+    samoan STRING, 
+    ther_native_hawaiian_and_other_pacific_pslander STRING, 
+    race_alone_or_in_combination_with_one_or_more_other_races_total_population STRING, 
+    hispanic_or_latino_total_population STRING, 
+    ispanic_or_latino_total_population_of_any_race STRING, 
+    mexican STRING, 
+    puerto_rican STRING, 
+    cuban STRING, 
+    other_hispanic_or_latin STRING, 
+    `year` STRING 
+    ) 
+
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
+WITH SERDEPROPERTIES ( 
+   "separatorChar" = ",", 
+   "quoteChar" = "\"", 
+   "escapeChar" = "\\" 
+) 
+LOCATION '/user/dkim171/Project/population/chicago/' 
+TBLPROPERTIES ('skip.header.line.count'='2'); 
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+----------------------------------------------------------------------------------------------------------------------------
+Step 7: Join Hive tables Education, Employment, Income and Population with Crime Data and download for the future analysis 
+----------------------------------------------------------------------------------------------------------------------------
+
+Create Los Angeles crime description table:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS crime_description_la; 
+
+CREATE TABLE crime_description_la AS 
+SELECT DISTINCT  
+    CAST(crm_cd AS INT) AS crm_cd,  
+    crm_cd_desc 
+FROM original_la_crime; 
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Join Los Angeles education and crime tables and download final file:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_education_and_crime; 
+CREATE TABLE la_education_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    CAST(p. primary_type AS INT) AS crm_cd, 
+    p.count, 
+    c.population_age_18_24, 
+    c.high_school_grad_or_higher_18_24, 
+    c.population_25_34_years, 
+    c.high_school_grad_or_higher_25_34, 
+    c.population_35_44_years, 
+    c.high_school_grad_or_higher_35_44, 
+    c.population_45_64_years, 
+    c.high_school_grad_or_higher_45_64, 
+    c.population_age_65_and_over, 
+    c.high_school_grad_or_higher_65_and_over, 
+    'Los Angeles County' AS area_name 
+FROM 
+  original_la_education c 
+LEFT JOIN 
+   la_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Add new column with crime description: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_education_with_crime_description; 
+CREATE TABLE la_education_with_crime_description AS 
+SELECT t1.*, 
+REGEXP_REPLACE(t2.crm_cd_desc, ',', '') AS description 
+FROM 
+    la_education_and_crime t1 
+LEFT JOIN 
+   crime_description_la t2 
+ON 
+   t1.crm_cd = t2.crm_cd 
+ORDER BY t1.year;
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Since the education table has some tractid values and the crime dataset does not, we need to clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_la_education_and_crime; 
+CREATE TABLE final_la_education_and_crime  
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/education/final/la'  
+AS 
+SELECT * 
+FROM la_education_with_crime_description 
+WHERE  
+    crm_cd IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/education/final/la 
+
+Get file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/education/final/la/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+ 
+Join Chicago education and crime tables and download final file:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS chicago_education_and_crime; 
+CREATE TABLE chicago_education_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    p. primary_type, 
+    p.count, 
+    c.population_age_18_24, 
+    c.high_school_grad_or_higher_18_24, 
+    c.population_25_34_years, 
+    c.high_school_grad_or_higher_25_34, 
+    c.population_35_44_years, 
+    c.high_school_grad_or_higher_35_44, 
+    c.population_45_64_years STRING, 
+    c.high_school_grad_or_higher_45_64, 
+    c.population_age_65_and_over, 
+    c.high_school_grad_or_higher_65_and_over, 
+    'Cook County' AS area_name 
+FROM 
+  original_chicago_education c 
+LEFT JOIN 
+   chicago_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_chicago_education_and_crime; 
+
+CREATE TABLE final_chicago_education_and_crime  
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/education/final/chicago' 
+AS 
+SELECT * 
+FROM chicago_education_and_crime 
+WHERE  
+    primary_type IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/education/final/chicago 
+
+     -    Remove file from the linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/education/final/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+
+Join LA employment and crime tables and download final file:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_employment_and_crime; 
+
+CREATE TABLE la_employment_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    CAST(p. primary_type AS INT) AS crm_cd, 
+    p.count, 
+    c.population_age_16_and_over, 
+    c.population_age_16_and_over_in_labor_force, 
+    c.population_age_16_and_over_in_civ_labor_force_employed, 
+    c.population_age_16_and_over_in_civ_labor_force_unemployed, 
+    c.population_age_16_and_over_not_in_labor_force, 
+    c.own_children_of_the_householder_under_6_years, 
+    c.own_children_of_the_householder_under_6_to_17_years, 
+    'Los Angeles County' AS area_name 
+FROM 
+  original_la_employment c 
+LEFT JOIN 
+   la_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+Add new column with crime description: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_employment_with_crime_description; 
+
+CREATE TABLE la_employment_with_crime_description AS 
+SELECT t1.*, 
+REGEXP_REPLACE(t2.crm_cd_desc, ',', '') AS description 
+FROM 
+    la_employment_and_crime t1 
+LEFT JOIN 
+   crime_description_la t2 
+ON 
+   t1.crm_cd = t2.crm_cd 
+ORDER BY t1.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_la_employment_and_crime; 
+CREATE TABLE final_la_employment_and_crime  
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/employment/final/la' 
+AS 
+SELECT * 
+FROM la_employment_with_crime_description 
+WHERE  
+    crm_cd IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/employment/final/la 
+
+     -	Remove file from the Linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/employment/final/la/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+
+
+Join Chicago employment and crime tables and download final file:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS chicago_employment_and_crime; 
+CREATE TABLE chicago_employment_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    p. primary_type, 
+    p.count, 
+    c.population_age_16_and_over, 
+    c.population_age_16_and_over_in_labor_force, 
+    c.population_age_16_and_over_in_civ_labor_force_employed, 
+    c.population_age_16_and_over_in_civ_labor_force_unemployed, 
+    c.population_age_16_and_over_not_in_labor_force, 
+    c.own_children_of_the_householder_under_6_years, 
+    c.own_children_of_the_householder_under_6_to_17_years, 
+    'Cook County' AS area_name 
+FROM 
+  original_chicago_employment c 
+LEFT JOIN 
+   chicago_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_chicago_employment_and_crime; 
+
+CREATE TABLE final_chicago_employment_and_crime  
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/employment/final/chicago' 
+AS 
+SELECT * 
+FROM chicago_employment_and_crime 
+WHERE  
+    primary_type IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/employment/final/chicago 
+
+     -    Remove file from the Linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/employment/final/chicago/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+ 
+
+Join LA Income and Crime tables and download final file: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_income_and_crime; 
+CREATE TABLE la_income_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    CAST(p. primary_type AS INT) AS crm_cd, 
+    p.count, 
+    c.less_than_10k, 
+    c.from_10k_to_14999, 
+    c.from_15k_to_24999, 
+    c.from_25k_to_34999, 
+    c.from_35k_to_49999, 
+    c.from_50k_to_74999, 
+    c.from_75k_to_99999, 
+    c.from_100k_to_149999, 
+    c.from_150k_to_199999, 
+    c.from_200k_or_more, 
+    REGEXP_REPLACE(c.median_income, '250,000\\+', '250000') AS median_income, 
+    'Los Angeles County' AS area_name 
+FROM 
+  original_la_income c 
+LEFT JOIN 
+   la_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year;
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Add new column with crime description: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_income_with_crime_description; 
+CREATE TABLE la_income_with_crime_description AS 
+SELECT t1.*, 
+REGEXP_REPLACE(t2.crm_cd_desc, ',', '') AS description 
+FROM 
+    la_income_and_crime t1 
+LEFT JOIN 
+   crime_description_la t2 
+ON 
+   t1.crm_cd = t2.crm_cd 
+ORDER BY t1.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_la_income_and_crime; 
+
+CREATE TABLE final_la_income_and_crime 
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/income/final/la' 
+AS 
+SELECT * 
+FROM la_income_with_crime_description 
+WHERE  
+    crm_cd IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/income/final/la 
+
+     -    Remove previous file from the Linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/income/final/la/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+
+
+Join Chicago Income and Crime tables and download final file:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS chicago_income_and_crime; 
+
+CREATE TABLE chicago_income_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    p. primary_type, 
+    p.count, 
+    c.less_than_10k, 
+    c.from_10k_to_14999, 
+    c.from_15k_to_24999, 
+    c.from_25k_to_34999, 
+    c.from_35k_to_49999, 
+    c.from_50k_to_74999, 
+    c.from_75k_to_99999, 
+    c.from_100k_to_149999, 
+    c.from_150k_to_199999, 
+    c.from_200k_or_more, 
+    c.median_income, 
+    'Cook County' AS area_name 
+FROM 
+  original_chicago_income c 
+LEFT JOIN 
+   chicago_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_chicago_income_and_crime; 
+
+CREATE TABLE final_chicago_income_and_crime 
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/income/final/chicago' 
+AS 
+SELECT * 
+FROM chicago_income_and_crime 
+WHERE  
+    primary_type IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/income/final/chicago 
+
+     -    Remove previous file from the Linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/income/final/chicago/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+ 
+Join LA Population and Crime tables and download final file:
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_population_and_crime; 
+
+CREATE TABLE la_population_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    CAST(p. primary_type AS INT) AS crm_cd, 
+    p.count, 
+    c.one_race, 
+    c.black_or_African_american, 
+    c.merican_indian_and_alaska_native, 
+    c.herokee_tribal_grouping, 
+    c.chippewa_tribal_grouping, 
+    c.navajo_tribal_grouping, 
+    c.sioux_tribal_grouping, 
+    c.asian, 
+    c.indian, 
+    c.chinese, 
+    c.ilipino, 
+    c.japanese, 
+    c.korean, 
+    c.vietnamese, 
+    c.ther_asian, 
+    c.native_hawaiian_and_other_pacific_islander, 
+    c.chamorro, 
+    c.native_hawaiian, 
+    c.samoan, 
+    c.ther_native_hawaiian_and_other_pacific_pslander, 
+    c.race_alone_or_in_combination_with_one_or_more_other_races_total_population, 
+    c.hispanic_or_latino_total_population, 
+    c.ispanic_or_latino_total_population_of_any_race, 
+    c.mexican, 
+    c.puerto_rican, 
+    c.cuban, 
+    c.other_hispanic_or_latin, 
+    'Los Angeles County' AS area_name 
+FROM 
+  original_la_population c 
+LEFT JOIN 
+   la_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+
+Add new column with crime description: 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS la_population_with_crime_description; 
+
+CREATE TABLE la_population_with_crime_description AS 
+SELECT t1.*, 
+REGEXP_REPLACE(t2.crm_cd_desc, ',', '') AS description 
+FROM 
+    la_population_and_crime t1 
+LEFT JOIN 
+   crime_description_la t2 
+ON 
+   t1.crm_cd = t2.crm_cd 
+ORDER BY t1.year
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+
+Clean up our output table. 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_la_population_and_crime; 
+
+CREATE TABLE final_la_population_and_crime 
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/population/final/la' 
+AS 
+SELECT * 
+FROM la_population_with_crime_description 
+WHERE  
+    crm_cd IS NOT NULL  
+    AND count IS NOT NULL;
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/population/final/la 
+
+     -    Remove previous file from the Linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/population/final/la/000000_0 
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
+ 
+Join Chicago Population and Crime tables and download final file 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS chicago_population_and_crime; 
+
+CREATE TABLE chicago_population_and_crime AS 
+SELECT 
+    SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) AS tract_id, 
+    c.year, 
+    p. primary_type, 
+    p.count, 
+    c.one_race, 
+    c.black_or_African_american, 
+    c.merican_indian_and_alaska_native, 
+    c.herokee_tribal_grouping, 
+    c.chippewa_tribal_grouping, 
+    c.navajo_tribal_grouping, 
+    c.sioux_tribal_grouping, 
+    c.asian, 
+    c.indian, 
+    c.chinese, 
+    c.ilipino, 
+    c.japanese, 
+    c.korean, 
+    c.vietnamese, 
+    c.ther_asian, 
+    c.native_hawaiian_and_other_pacific_islander, 
+    c.chamorro, 
+    c.native_hawaiian, 
+    c.samoan, 
+    c.ther_native_hawaiian_and_other_pacific_pslander, 
+    c.race_alone_or_in_combination_with_one_or_more_other_races_total_population, 
+    c.hispanic_or_latino_total_population, 
+    c.ispanic_or_latino_total_population_of_any_race, 
+    c.mexican, 
+    c.puerto_rican, 
+    c.cuban, 
+    c.other_hispanic_or_latin, 
+    'Cook County' AS area_name 
+FROM 
+  original_chicago_population c 
+LEFT JOIN 
+   chicago_tractid p 
+ON 
+   c.year = p.year 
+   AND SUBSTRING(c.geo_id, LOCATE('US', c.geo_id) + 2) = p.tract_id 
+ORDER BY 
+   c.year; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Clean up our output table. 
+
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   SQL      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+DROP TABLE IF EXISTS final_chicago_population_and_crime; 
+
+CREATE TABLE final_chicago_population_and_crime 
+ROW FORMAT DELIMITED  
+FIELDS TERMINATED BY ','  
+STORED AS TEXTFILE  
+LOCATION '/user/dkim171/Project/population/final/chicago' 
+AS 
+SELECT * 
+FROM chicago_population_and_crime 
+WHERE  
+    primary_type IS NOT NULL  
+    AND count IS NOT NULL; 
+----------------------------------------------------------------------------------------------------------------------------
+---------------------------------------   End      -------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------
+Open Linux terminal and check file: 
+hdfs dfs -ls /user/dkim171/Project/population/final/chicago 
+
+     -    Remove previous file from the Linux server 
+-bash-4.2$ rm 000000_0 
+
+Get new file from the HDFS to the Linux server: 
+hdfs dfs -get /user/dkim171/Project/population/final/chicago/000000_0 
+
+
+Exit from the Linux server and enter command in terminal to download file: 
+scp dkim171@129.146.230.230:/home/dkim171/000000_0 ~/Desktop/ 
+
